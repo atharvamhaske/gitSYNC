@@ -232,17 +232,37 @@ function successPage(token) {
         }
       }
       
-      // Try immediately
-      sendMessage();
+      // Function to close window safely
+      function closeWindow() {
+        setTimeout(() => {
+          try {
+            window.close();
+          } catch (e) {
+            console.log('[OAuth Callback] Could not auto-close window');
+          }
+        }, 500);
+      }
       
-      // Try multiple times with increasing delays
-      const attempts = [100, 300, 500, 1000, 2000];
+      // Try immediately
+      const sentImmediately = sendMessage();
+      
+      // If message sent immediately, close window right away
+      if (sentImmediately && messageSent) {
+        closeWindow();
+        return; // Exit early if message was sent successfully
+      }
+      
+      // Try multiple times with increasing delays if first attempt failed
+      const attempts = [100, 300, 500, 1000];
       attempts.forEach((delay, index) => {
         setTimeout(() => {
           if (!messageSent) {
             const sent = sendMessage();
-            if (!sent && index === attempts.length - 1) {
-              statusText.textContent = 'Please manually copy the token or try again.';
+            if (sent && messageSent) {
+              // Message sent successfully, close window
+              closeWindow();
+            } else if (!sent && index === attempts.length - 1) {
+              statusText.textContent = 'Please manually close this window.';
               statusText.style.color = '#ef4444';
             }
           }
@@ -252,7 +272,10 @@ function successPage(token) {
       // Also try when window gains focus
       window.addEventListener('focus', () => {
         if (!messageSent) {
-          sendMessage();
+          const sent = sendMessage();
+          if (sent && messageSent) {
+            closeWindow();
+          }
         }
       });
       
@@ -264,20 +287,6 @@ function successPage(token) {
       } catch (e) {
         // Ignore
       }
-      
-      // Close window after a delay
-      setTimeout(() => {
-        if (window.opener && !window.opener.closed && messageSent) {
-          setTimeout(() => {
-            try {
-              window.close();
-            } catch (e) {
-              // Some browsers prevent closing windows not opened by script
-              console.log('[OAuth Callback] Could not auto-close window');
-            }
-          }, 1000);
-        }
-      }, 4000);
     })();
   </script>
 </body>

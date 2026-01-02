@@ -1,8 +1,8 @@
 import React from 'react';
 
 function App() {
-  const chromeStoreUrl = '#'; // Update after publishing
-  const githubRepoUrl = 'https://github.com/atharvamhaske/git-sync';
+  const githubRepoUrl = 'https://github.com/atharvamhaske/gitSYNC';
+  const downloadExtensionUrl = 'https://github.com/atharvamhaske/gitSYNC/blob/main/README.md';
 
   return (
     <div className="min-h-screen flex flex-col bg-white">
@@ -19,7 +19,9 @@ function App() {
         {/* CTAs */}
         <div className="flex gap-4 flex-wrap justify-center mb-20">
           <a
-            href={chromeStoreUrl}
+            href={downloadExtensionUrl}
+            target="_blank"
+            rel="noopener noreferrer"
             className="inline-flex items-center gap-2.5 px-8 py-4 bg-black text-white rounded-lg font-medium text-sm hover:bg-gray-800 transition-colors"
           >
             <ChromeIcon />

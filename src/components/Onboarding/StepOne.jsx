@@ -8,10 +8,12 @@ function StepOne({ onComplete }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const popupRef = useRef(null);
+  const popupMonitorIntervalRef = useRef(null);
+  const processedRef = useRef(false);
 
   useEffect(() => {
-    let processed = false;
     let checkInterval = null;
+    processedRef.current = false;
     
     // Listen for OAuth callback message
     const handleMessage = async (event) => {
@@ -19,16 +21,20 @@ function StepOne({ onComplete }) {
       // Log for debugging
       console.log('[GitSync] Received message:', event.data, 'from origin:', event.origin);
       
-      if (event.data?.type === 'GITHUB_AUTH_SUCCESS' && event.data?.token && !processed) {
-        processed = true;
+      if (event.data?.type === 'GITHUB_AUTH_SUCCESS' && event.data?.token && !processedRef.current) {
+        processedRef.current = true;
         console.log('[GitSync] Processing token...');
         setLoading(true);
         setError(null);
         
-        // Clear the polling interval since we got the token
+        // Clear all intervals since we got the token
         if (checkInterval) {
           clearInterval(checkInterval);
           checkInterval = null;
+        }
+        if (popupMonitorIntervalRef.current) {
+          clearInterval(popupMonitorIntervalRef.current);
+          popupMonitorIntervalRef.current = null;
         }
         
         try {
@@ -36,12 +42,13 @@ function StepOne({ onComplete }) {
           await validateGitHubToken(event.data.token);
           await setStorageData({ githubToken: event.data.token });
           console.log('[GitSync] Token validated and stored, moving to step 2');
+          // Don't reset loading here - let onComplete handle the transition
           onComplete(event.data.token);
         } catch (err) {
           console.error('[GitSync] Token validation error:', err);
           setError(err.message || 'Failed to validate token. Please try again.');
           setLoading(false);
-          processed = false; // Allow retry on error
+          processedRef.current = false; // Allow retry on error
         }
       } else if (event.data?.type === 'GITHUB_AUTH_ERROR') {
         console.error('[GitSync] OAuth error:', event.data.error);
@@ -51,6 +58,10 @@ function StepOne({ onComplete }) {
           clearInterval(checkInterval);
           checkInterval = null;
         }
+        if (popupMonitorIntervalRef.current) {
+          clearInterval(popupMonitorIntervalRef.current);
+          popupMonitorIntervalRef.current = null;
+        }
       }
     };
 
@@ -58,7 +69,7 @@ function StepOne({ onComplete }) {
     // Check if we're currently in loading state
     checkInterval = setInterval(async () => {
       const currentLoading = document.querySelector('button:disabled') !== null; // Check if button is disabled (loading state)
-      if (!processed && currentLoading) {
+      if (!processedRef.current && currentLoading) {
         try {
           const data = await getStorageData(['oauth_pending_token']);
           if (data.oauth_pending_token) {
@@ -81,7 +92,7 @@ function StepOne({ onComplete }) {
         type: event.data?.type,
         hasToken: !!event.data?.token,
         origin: event.origin,
-        processed
+        processed: processedRef.current
       });
       handleMessage(event);
     };
@@ -99,6 +110,10 @@ function StepOne({ onComplete }) {
       window.removeEventListener('focus', handleFocus);
       if (checkInterval) {
         clearInterval(checkInterval);
+      }
+      if (popupMonitorIntervalRef.current) {
+        clearInterval(popupMonitorIntervalRef.current);
+        popupMonitorIntervalRef.current = null;
       }
     };
   }, [onComplete]);
@@ -128,20 +143,28 @@ function StepOne({ onComplete }) {
 
     popupRef.current = popup;
 
-    // Monitor popup close
+    // Monitor popup close - but don't interfere if we've already processed the token
+    let popupClosedHandled = false;
     const checkPopup = setInterval(() => {
-      if (popup.closed) {
+      if (popup.closed && !popupClosedHandled) {
+        popupClosedHandled = true;
         clearInterval(checkPopup);
+        popupMonitorIntervalRef.current = null;
+        
         // Only reset loading if we haven't received a success message
-        // Give it a moment in case message is still processing
+        // Give it extra time in case message is still processing
         setTimeout(() => {
-          setLoading(prev => {
-            // Only reset if still loading (message handler might have already set it to false)
-            return prev ? false : prev;
-          });
-        }, 1000);
+          // Only reset if we're still on step 1 and haven't processed the token
+          // If processedRef.current is true, we've already moved to step 2, so don't reset
+          if (!processedRef.current) {
+            setLoading(false);
+          }
+        }, 2000); // Increased delay to ensure message processing completes
       }
     }, 500);
+    
+    // Store the interval reference so we can clear it when token is received
+    popupMonitorIntervalRef.current = checkPopup;
   };
 
   return (
