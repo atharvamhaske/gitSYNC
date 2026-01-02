@@ -117,14 +117,14 @@ function StepOne({ onComplete }) {
         
         {/* Footer */}
         <p className="text-center text-xs text-gray-400 mt-4">
-          Built by{' '}
+          Made by{' '}
           <a 
             href="https://x.com/AtharvaXDevs" 
             target="_blank" 
             rel="noopener noreferrer"
             className="text-gray-500 hover:text-black"
           >
-            Atharva Mhaske
+            Atharva
           </a>
           {' '}with{' '}
           <a 

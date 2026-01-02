@@ -101,9 +101,13 @@ function App() {
       {/* Footer */}
       <footer className="py-6 text-center text-sm text-gray-400">
         <p>
-          Built by{' '}
+          Made by{' '}
           <a href="https://x.com/AtharvaXDevs" target="_blank" rel="noopener noreferrer" className="text-gray-600 hover:text-black">
-            Atharva Mhaske
+            Atharva
+          </a>
+          {' '}with{' '}
+          <a href="https://www.blackbox.ai" target="_blank" rel="noopener noreferrer" className="text-gray-600 hover:text-black">
+            @blackboxai
           </a>
           {' · '}
           <a href="/privacy.html" className="text-gray-600 hover:text-black">
