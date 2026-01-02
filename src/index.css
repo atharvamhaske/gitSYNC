@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  width: 380px;
+  min-height: 480px;
+  font-family: 'Satoshi', sans-serif;
+  background-color: #ffffff;
+  color: #000000;
+}
+
+.font-heading {
+  font-family: 'Instrument Serif', serif;
+}
+
+.font-body {
+  font-family: 'Satoshi', sans-serif;
+}
