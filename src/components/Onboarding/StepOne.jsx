@@ -126,6 +126,15 @@ function StepOne({ onComplete }) {
           >
             Atharva Mhaske
           </a>
+          {' '}with{' '}
+          <a 
+            href="https://www.blackbox.ai" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-gray-500 hover:text-black"
+          >
+            @blackboxai
+          </a>
         </p>
       </div>
     </div>
