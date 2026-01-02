@@ -4,7 +4,7 @@ Automatically sync your LeetCode solutions to GitHub.
 
 ## Features
 
--  Auto-sync on successful submission
+- Auto-sync on successful submission
 - Organized by difficulty (easy/, medium/, hard/)
 - Secure OAuth authentication
 - Works in background

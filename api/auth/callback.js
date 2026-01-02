@@ -4,18 +4,39 @@
  */
 
 export default async function handler(req, res) {
-  const { code } = req.query;
+  const { code, error: githubError, error_description } = req.query;
+
+  // Check for GitHub OAuth errors
+  if (githubError) {
+    console.error('[OAuth Callback] GitHub error:', githubError, error_description);
+    return res.status(400).send(errorPage(error_description || githubError || 'Authorization was denied or failed'));
+  }
 
   if (!code) {
-    return res.status(400).send(errorPage('No authorization code received'));
+    console.error('[OAuth Callback] No authorization code received');
+    return res.status(400).send(errorPage('No authorization code received. Please try again.'));
   }
 
   const clientId = process.env.GITHUB_CLIENT_ID;
   const clientSecret = process.env.GITHUB_CLIENT_SECRET;
 
-  if (!clientId || !clientSecret) {
-    return res.status(500).send(errorPage('OAuth not configured'));
+  // Better error messages for missing env vars
+  if (!clientId) {
+    console.error('[OAuth Callback] GITHUB_CLIENT_ID is missing');
+    return res.status(500).send(errorPage('OAuth configuration error: Client ID is missing. Please check your Vercel environment variables.'));
   }
+
+  if (!clientSecret) {
+    console.error('[OAuth Callback] GITHUB_CLIENT_SECRET is missing');
+    return res.status(500).send(errorPage('OAuth configuration error: Client Secret is missing. Please check your Vercel environment variables.'));
+  }
+
+  console.log('[OAuth Callback] Exchanging code for token...', { 
+    hasCode: !!code, 
+    hasClientId: !!clientId, 
+    hasClientSecret: !!clientSecret,
+    codeLength: code.length 
+  });
 
   try {
     // Exchange code for access token
@@ -34,29 +55,53 @@ export default async function handler(req, res) {
 
     const tokenData = await tokenResponse.json();
 
+    console.log('[OAuth Callback] Token response:', {
+      hasError: !!tokenData.error,
+      error: tokenData.error,
+      errorDescription: tokenData.error_description,
+      hasAccessToken: !!tokenData.access_token,
+      hasScope: !!tokenData.scope
+    });
+
     if (tokenData.error) {
-      return res.status(400).send(errorPage(tokenData.error_description || tokenData.error));
+      const errorMsg = tokenData.error_description || tokenData.error;
+      console.error('[OAuth Callback] GitHub API error:', errorMsg);
+      
+      // Provide helpful error messages for common issues
+      let userMessage = errorMsg;
+      if (tokenData.error === 'bad_verification_code') {
+        userMessage = 'The authorization code has expired or is invalid. Please try again.';
+      } else if (tokenData.error === 'incorrect_client_credentials') {
+        userMessage = 'Invalid client credentials. Please check your GitHub OAuth app settings.';
+      }
+      
+      return res.status(400).send(errorPage(userMessage));
     }
 
     const accessToken = tokenData.access_token;
 
     if (!accessToken) {
-      return res.status(400).send(errorPage('No access token received'));
+      console.error('[OAuth Callback] No access token in response:', tokenData);
+      return res.status(400).send(errorPage('No access token received from GitHub. Please try again.'));
     }
 
+    console.log('[OAuth Callback] Successfully obtained access token');
+    
     // Return HTML page that sends token to extension
     res.setHeader('Content-Type', 'text/html');
     res.send(successPage(accessToken));
 
   } catch (error) {
-    console.error('OAuth callback error:', error);
-    return res.status(500).send(errorPage('Failed to complete authorization'));
+    console.error('[OAuth Callback] Unexpected error:', error);
+    return res.status(500).send(errorPage(`Failed to complete authorization: ${error.message || 'Unknown error'}`));
   }
 }
 
 function successPage(token) {
-  return `
-<!DOCTYPE html>
+  // Escape token for safe insertion into HTML/JS
+  const tokenJson = JSON.stringify(token);
+  
+  return `<!DOCTYPE html>
 <html>
 <head>
   <title>GitSync - Authorization Successful</title>
@@ -105,23 +150,104 @@ function successPage(token) {
       </svg>
     </div>
     <h1>Authorization Successful!</h1>
-    <p>You can close this window now.</p>
+    <p id="status-text">Sending token to extension...</p>
+    <p style="font-size: 12px; color: #9ca3af; margin-top: 8px;" id="close-text" style="display: none;">You can close this window now.</p>
   </div>
   <script>
-    // Send token to opener (extension popup)
-    if (window.opener) {
-      window.opener.postMessage({ type: 'GITHUB_AUTH_SUCCESS', token: '${token}' }, '*');
-      setTimeout(() => window.close(), 1500);
-    }
+    (function() {
+      const token = ${tokenJson};
+      let messageSent = false;
+      const statusText = document.getElementById('status-text');
+      const closeText = document.getElementById('close-text');
+      
+      // Function to send message to opener
+      function sendMessage() {
+        if (window.opener && !window.opener.closed) {
+          try {
+            // Send with wildcard origin (for extension popups)
+            window.opener.postMessage({ 
+              type: 'GITHUB_AUTH_SUCCESS', 
+              token: token 
+            }, '*');
+            
+            if (!messageSent) {
+              messageSent = true;
+              console.log('[OAuth Callback] Message sent to opener');
+              statusText.textContent = 'Token sent successfully!';
+              setTimeout(() => {
+                if (closeText) closeText.style.display = 'block';
+                statusText.textContent = 'You can close this window now.';
+              }, 1000);
+            }
+            return true;
+          } catch (e) {
+            console.error('[OAuth Callback] Failed to send message:', e);
+            return false;
+          }
+        } else {
+          console.warn('[OAuth Callback] No opener window found or opener is closed');
+          return false;
+        }
+      }
+      
+      // Try immediately
+      sendMessage();
+      
+      // Try multiple times with increasing delays
+      const attempts = [100, 300, 500, 1000, 2000];
+      attempts.forEach((delay, index) => {
+        setTimeout(() => {
+          if (!messageSent) {
+            const sent = sendMessage();
+            if (!sent && index === attempts.length - 1) {
+              statusText.textContent = 'Please manually copy the token or try again.';
+              statusText.style.color = '#ef4444';
+            }
+          }
+        }, delay);
+      });
+      
+      // Also try when window gains focus
+      window.addEventListener('focus', () => {
+        if (!messageSent) {
+          sendMessage();
+        }
+      });
+      
+      // Store token in URL hash as fallback
+      try {
+        if (window.location.hash.indexOf('token=') === -1) {
+          window.location.hash = '#token=' + encodeURIComponent(token);
+        }
+      } catch (e) {
+        // Ignore
+      }
+      
+      // Close window after a delay
+      setTimeout(() => {
+        if (window.opener && !window.opener.closed && messageSent) {
+          setTimeout(() => {
+            try {
+              window.close();
+            } catch (e) {
+              // Some browsers prevent closing windows not opened by script
+              console.log('[OAuth Callback] Could not auto-close window');
+            }
+          }, 1000);
+        }
+      }, 4000);
+    })();
   </script>
 </body>
-</html>
-  `;
+</html>`;
 }
 
 function errorPage(message) {
-  return `
-<!DOCTYPE html>
+  // Escape message for safe insertion into HTML/JS
+  const messageEscaped = message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+  const messageJson = JSON.stringify(message);
+  
+  return `<!DOCTYPE html>
 <html>
 <head>
   <title>GitSync - Authorization Failed</title>
@@ -170,14 +296,29 @@ function errorPage(message) {
       </svg>
     </div>
     <h1>Authorization Failed</h1>
-    <p>${message}</p>
+    <p>${messageEscaped}</p>
   </div>
   <script>
-    if (window.opener) {
-      window.opener.postMessage({ type: 'GITHUB_AUTH_ERROR', error: '${message}' }, '*');
-    }
+    (function() {
+      const errorMsg = ${messageJson};
+      
+      if (window.opener && !window.opener.closed) {
+        try {
+          window.opener.postMessage({ 
+            type: 'GITHUB_AUTH_ERROR', 
+            error: errorMsg 
+          }, '*');
+          
+          window.opener.postMessage({ 
+            type: 'GITHUB_AUTH_ERROR', 
+            error: errorMsg 
+          }, window.location.origin);
+        } catch (e) {
+          console.error('Failed to send error message:', e);
+        }
+      }
+    })();
   </script>
 </body>
-</html>
-  `;
+</html>`;
 }
