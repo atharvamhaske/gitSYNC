@@ -70,7 +70,7 @@ function StepOne({ onComplete }) {
     <div className="flex flex-col flex-1">
       <div className="flex-1">
         {/* GitSync Branding */}
-        <div className="flex flex-col items-center mb-6">
+        <div className="flex flex-col items-center mb-8">
           <img 
             src="gitsync.png" 
             alt="GitSync" 
@@ -81,49 +81,52 @@ function StepOne({ onComplete }) {
           </h1>
         </div>
 
-        <h2 className="font-heading text-xl text-black mb-3">
-          Authorize GitHub
+        {/* Main CTA Text */}
+        <h2 className="font-heading text-xl text-black mb-2">
+          Connect your GitHub
         </h2>
-        <p className="font-body text-gray-600 text-sm leading-relaxed mb-6">
-          Connect your GitHub account to enable automatic syncing of your LeetCode solutions to a repository.
+        <p className="font-body text-gray-500 text-sm leading-relaxed mb-6">
+          to sync your LeetCode solutions automatically
         </p>
 
-        <div className="space-y-4 mb-6">
-          <div className="flex items-start gap-3">
-            <div className="w-5 h-5 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-              <span className="text-xs">✓</span>
-            </div>
-            <p className="font-body text-sm text-gray-700">
-              Secure OAuth authentication
-            </p>
+        {/* Benefits */}
+        <div className="space-y-3 mb-6">
+          <div className="flex items-center gap-3">
+            <span className="w-5 h-5 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 text-xs">✓</span>
+            <p className="font-body text-sm text-gray-600">Secure OAuth authentication</p>
           </div>
-          <div className="flex items-start gap-3">
-            <div className="w-5 h-5 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-              <span className="text-xs">✓</span>
-            </div>
-            <p className="font-body text-sm text-gray-700">
-              Only repository access required
-            </p>
+          <div className="flex items-center gap-3">
+            <span className="w-5 h-5 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 text-xs">✓</span>
+            <p className="font-body text-sm text-gray-600">Only repository access required</p>
           </div>
-          <div className="flex items-start gap-3">
-            <div className="w-5 h-5 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-              <span className="text-xs">✓</span>
-            </div>
-            <p className="font-body text-sm text-gray-700">
-              Revoke access anytime from GitHub
-            </p>
+          <div className="flex items-center gap-3">
+            <span className="w-5 h-5 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 text-xs">✓</span>
+            <p className="font-body text-sm text-gray-600">Revoke access anytime from GitHub</p>
           </div>
         </div>
 
         {error && (
-          <p className="mt-4 text-sm text-red-600 font-body">{error}</p>
+          <p className="text-sm text-red-600 font-body mb-4">{error}</p>
         )}
       </div>
 
-      <div className="mt-8">
+      <div className="mt-auto">
         <Button onClick={handleAuthorize} disabled={loading}>
-          {loading ? 'Authorizing...' : 'Authorize GitHub'}
+          {loading ? 'Connecting...' : 'Connect GitHub'}
         </Button>
+        
+        {/* Footer */}
+        <p className="text-center text-xs text-gray-400 mt-4">
+          Built by{' '}
+          <a 
+            href="https://x.com/AtharvaXDevs" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-gray-500 hover:text-black"
+          >
+            Atharva Mhaske
+          </a>
+        </p>
       </div>
     </div>
   );

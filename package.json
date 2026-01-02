@@ -4,6 +4,8 @@
   "description": "Chrome extension to sync LeetCode solutions to GitHub",
   "scripts": {
     "build": "webpack --mode production",
+    "build:landing": "webpack --config webpack.landing.js --mode production",
+    "build:all": "npm run build && npm run build:landing",
     "dev": "webpack --mode development --watch"
   },
   "dependencies": {

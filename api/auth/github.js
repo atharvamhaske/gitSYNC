@@ -10,7 +10,7 @@ export default function handler(req, res) {
     return res.status(500).json({ error: 'GitHub Client ID not configured' });
   }
 
-  const redirectUri = `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000'}/api/auth/callback`;
+  const redirectUri = 'https://gitxsync.vercel.app/api/auth/callback';
   
   const githubAuthUrl = new URL('https://github.com/login/oauth/authorize');
   githubAuthUrl.searchParams.set('client_id', clientId);

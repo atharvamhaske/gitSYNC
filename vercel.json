@@ -1,5 +1,7 @@
 {
   "version": 2,
+  "buildCommand": "npm run build:landing",
+  "outputDirectory": "landing-dist",
   "builds": [
     {
       "src": "api/**/*.js",
@@ -10,6 +12,10 @@
     {
       "src": "/api/(.*)",
       "dest": "/api/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/$1"
     }
   ]
 }

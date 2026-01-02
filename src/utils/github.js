@@ -5,9 +5,8 @@
 
 const GITHUB_API_BASE = 'https://api.github.com';
 
-// OAuth URL - Update this after deploying to Vercel
-// Replace 'your-app-name' with your actual Vercel deployment URL
-export const OAUTH_URL = 'https://git-sync-eight.vercel.app/api/auth/github';
+// OAuth URL for GitHub authorization
+export const OAUTH_URL = 'https://gitxsync.vercel.app/api/auth/github';
 
 /**
  * Validate GitHub Personal Access Token
