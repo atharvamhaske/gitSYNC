@@ -42,8 +42,20 @@ function StepOne({ onComplete }) {
           await validateGitHubToken(event.data.token);
           await setStorageData({ githubToken: event.data.token });
           console.log('[GitSync] Token validated and stored, moving to step 2');
-          // Don't reset loading here - let onComplete handle the transition
-          onComplete(event.data.token);
+          
+          // Reset loading state
+          setLoading(false);
+          
+          // Ensure extension popup stays open by focusing it
+          if (typeof window !== 'undefined') {
+            window.focus();
+          }
+          
+          // Call onComplete to transition to step 2
+          // Use requestAnimationFrame to ensure React state updates are processed
+          requestAnimationFrame(() => {
+            onComplete(event.data.token);
+          });
         } catch (err) {
           console.error('[GitSync] Token validation error:', err);
           setError(err.message || 'Failed to validate token. Please try again.');

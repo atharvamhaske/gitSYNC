@@ -232,21 +232,25 @@ function successPage(token) {
         }
       }
       
-      // Function to close window safely
+      // Function to close window safely - only close THIS window, not the opener
       function closeWindow() {
         setTimeout(() => {
           try {
-            window.close();
+            // Only close this callback window, never the opener
+            if (window.opener && !window.opener.closed) {
+              // Make sure opener is still there before closing
+              window.close();
+            }
           } catch (e) {
             console.log('[OAuth Callback] Could not auto-close window');
           }
-        }, 500);
+        }, 1000); // Increased delay to ensure message is processed
       }
       
       // Try immediately
       const sentImmediately = sendMessage();
       
-      // If message sent immediately, close window right away
+      // If message sent immediately, close window after a delay
       if (sentImmediately && messageSent) {
         closeWindow();
         return; // Exit early if message was sent successfully
@@ -259,7 +263,7 @@ function successPage(token) {
           if (!messageSent) {
             const sent = sendMessage();
             if (sent && messageSent) {
-              // Message sent successfully, close window
+              // Message sent successfully, close window after delay
               closeWindow();
             } else if (!sent && index === attempts.length - 1) {
               statusText.textContent = 'Please manually close this window.';
