@@ -2,11 +2,6 @@
   "version": 2,
   "buildCommand": "npm run build:landing",
   "outputDirectory": "landing-dist",
-  "functions": {
-    "api/**/*.js": {
-      "runtime": "@vercel/node@3"
-    }
-  },
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" }
   ]
