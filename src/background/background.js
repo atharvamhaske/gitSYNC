@@ -25,56 +25,82 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
+// Track in-flight syncs to prevent duplicates
+const inFlightSyncs = new Set();
+
 /**
  * Sync a LeetCode solution to GitHub
  * @param {object} problem - Problem data
  * @returns {Promise<object>} - Sync result
  */
 async function syncSolution(problem) {
-  // Get stored credentials
-  const data = await chrome.storage.local.get(['githubToken', 'repoUrl']);
+  // Create unique sync key
+  const codeHash = problem.code ? 
+    Array.from(problem.code).reduce((hash, char) => {
+      return ((hash << 5) - hash) + char.charCodeAt(0);
+    }, 0) : 0;
+  const syncKey = `${problem.name}-${problem.language}-${Math.abs(codeHash)}`;
   
-  if (!data.githubToken || !data.repoUrl) {
-    throw new Error('Not authenticated. Please complete onboarding.');
+  // Check if this sync is already in progress
+  if (inFlightSyncs.has(syncKey)) {
+    console.log('GitSync: Sync already in progress for:', syncKey);
+    throw new Error('Sync already in progress for this solution');
   }
   
-  const { owner, repo } = parseRepoUrl(data.repoUrl);
-  const { name, difficulty, language, code, extension } = problem;
+  // Mark as in progress
+  inFlightSyncs.add(syncKey);
   
-  // Convert problem name to camelCase
-  const fileName = toCamelCase(name) + '.' + extension;
-  
-  // Determine folder based on difficulty
-  const folder = difficulty.toLowerCase();
-  
-  // Create file path
-  const filePath = `${folder}/${fileName}`;
-  
-  // Create commit message
-  const commitMessage = `Add ${name} (${difficulty}) - ${language}`;
-  
-  // Push to GitHub
-  const result = await createOrUpdateFile(
-    data.githubToken,
-    owner,
-    repo,
-    filePath,
-    code,
-    commitMessage
-  );
-  
-  // Store synced problem
-  await addSyncedProblem(problem);
-  
-  // Show notification
-  chrome.notifications.create({
-    type: 'basic',
-    iconUrl: 'icons/icon48.png',
-    title: 'GitSync',
-    message: `Synced: ${name} to ${folder}/`
-  });
-  
-  return result;
+  try {
+    // Get stored credentials
+    const data = await chrome.storage.local.get(['githubToken', 'repoUrl']);
+    
+    if (!data.githubToken || !data.repoUrl) {
+      throw new Error('Not authenticated. Please complete onboarding.');
+    }
+    
+    const { owner, repo } = parseRepoUrl(data.repoUrl);
+    const { name, difficulty, language, code, extension } = problem;
+    
+    // Convert problem name to camelCase
+    const fileName = toCamelCase(name) + '.' + extension;
+    
+    // Determine folder based on difficulty
+    const folder = difficulty.toLowerCase();
+    
+    // Create file path
+    const filePath = `${folder}/${fileName}`;
+    
+    // Create commit message
+    const commitMessage = `Add ${name} (${difficulty}) - ${language}`;
+    
+    // Push to GitHub
+    const result = await createOrUpdateFile(
+      data.githubToken,
+      owner,
+      repo,
+      filePath,
+      code,
+      commitMessage
+    );
+    
+    // Store synced problem
+    await addSyncedProblem(problem);
+    
+    // Show notification
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icons/icon48.png',
+      title: 'GitSync',
+      message: `Synced: ${name} to ${folder}/`
+    });
+    
+    return result;
+  } finally {
+    // Remove from in-flight after a delay to prevent rapid re-syncs
+    setTimeout(() => {
+      inFlightSyncs.delete(syncKey);
+    }, 5000); // Keep in set for 5 seconds
+  }
 }
 
 /**

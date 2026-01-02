@@ -12,7 +12,7 @@ function StepOne({ onComplete }) {
 
   useEffect(() => {
     let storageCheckInterval = null;
-    processedRef.current = false;
+    // Don't reset processedRef on every render - only reset when component unmounts or user clicks authorize again
     
     // Process token and move to step 2
     const processTokenAndMoveToStep2 = async (token) => {
@@ -136,8 +136,9 @@ function StepOne({ onComplete }) {
     checkExistingToken();
     
     // Enhanced fallback: Check Chrome storage AND localStorage for token periodically
-    // This handles cases where postMessage fails - check every 300ms when loading
+    // This handles cases where postMessage fails - check every 500ms when loading (reduced frequency)
     storageCheckInterval = setInterval(async () => {
+      // Only check if we're loading AND haven't processed yet
       if (!processedRef.current && loading) {
         try {
           // Check localStorage first (callback page stores it there)
@@ -186,7 +187,7 @@ function StepOne({ onComplete }) {
           console.error('[GitSync] Error checking storage:', e);
         }
       }
-    }, 300); // Check every 300ms for faster response when loading
+    }, 500); // Check every 500ms when loading (reduced from 300ms to prevent excessive checks)
 
     // Enhanced message listener with better logging
     const messageHandler = (event) => {
@@ -221,6 +222,8 @@ function StepOne({ onComplete }) {
   }, [onComplete, loading]);
 
   const handleAuthorize = () => {
+    // Reset processed flag when user clicks authorize (new attempt)
+    processedRef.current = false;
     setLoading(true);
     setError(null);
 

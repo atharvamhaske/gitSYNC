@@ -32,8 +32,9 @@ const LANGUAGE_EXTENSIONS = {
 };
 
 // Track if we've already synced this submission
-let lastSyncedSubmission = null;
+let lastSyncedSubmissionHash = null;
 let isProcessing = false; // Prevent concurrent processing
+let syncCheckTimeout = null; // Debounce check calls
 
 /**
  * Initialize the content script
@@ -44,8 +45,8 @@ function init() {
   // Watch for submission results
   observeSubmissions();
   
-  // Also check periodically for accepted submissions
-  setInterval(checkForAcceptedSubmission, 2000);
+  // Also check periodically for accepted submissions (less frequently)
+  setInterval(checkForAcceptedSubmission, 5000); // Reduced from 2000ms to 5000ms
 }
 
 /**
@@ -53,11 +54,13 @@ function init() {
  */
 function observeSubmissions() {
   const observer = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      if (mutation.type === 'childList') {
-        checkForAcceptedSubmission();
-      }
+    // Debounce checks to avoid excessive calls
+    if (syncCheckTimeout) {
+      clearTimeout(syncCheckTimeout);
     }
+    syncCheckTimeout = setTimeout(() => {
+      checkForAcceptedSubmission();
+    }, 1000); // Wait 1 second after DOM changes settle
   });
   
   observer.observe(document.body, {
@@ -90,12 +93,15 @@ function checkForAcceptedSubmission() {
       const text = element.textContent.trim().toLowerCase();
       // Only trigger if it says "accepted" and not already processed
       if (text === 'accepted' || (text.includes('accepted') && text.length < 50)) {
-        // Add a small delay to ensure DOM is stable
-        setTimeout(() => {
+        // Debounce: only trigger once per second max
+        if (syncCheckTimeout) {
+          clearTimeout(syncCheckTimeout);
+        }
+        syncCheckTimeout = setTimeout(() => {
           if (!isProcessing) {
             handleAcceptedSubmission();
           }
-        }, 500);
+        }, 1000); // Increased delay to prevent rapid-fire triggers
         return;
       }
     }
@@ -133,13 +139,37 @@ async function handleAcceptedSubmission() {
     }
   }
   
-  // Create unique submission ID based on problem name, language, and code hash
-  const codeHash = problemInfo.code.substring(0, 50); // Use first 50 chars as hash
-  const submissionId = `${problemInfo.name}-${problemInfo.language}-${codeHash}`;
+  // Create a proper hash of the entire code to detect duplicates
+  // Simple hash function for code content
+  let codeHash = 0;
+  for (let i = 0; i < problemInfo.code.length; i++) {
+    const char = problemInfo.code.charCodeAt(i);
+    codeHash = ((codeHash << 5) - codeHash) + char;
+    codeHash = codeHash & codeHash; // Convert to 32-bit integer
+  }
+  const submissionHash = `${problemInfo.name}-${problemInfo.language}-${Math.abs(codeHash)}`;
   
   // Check if we've already synced this exact submission
-  if (lastSyncedSubmission === submissionId) {
+  if (lastSyncedSubmissionHash === submissionHash) {
+    console.log('GitSync: Duplicate submission detected, skipping sync');
     return;
+  }
+  
+  // Also check Chrome storage for previously synced submissions
+  try {
+    const syncedData = await new Promise((resolve) => {
+      chrome.storage.local.get(['syncedSubmissions'], (data) => {
+        resolve(data.syncedSubmissions || {});
+      });
+    });
+    
+    if (syncedData[submissionHash]) {
+      console.log('GitSync: Submission already synced (found in storage), skipping');
+      lastSyncedSubmissionHash = submissionHash;
+      return;
+    }
+  } catch (e) {
+    console.log('GitSync: Could not check synced submissions storage:', e);
   }
   
   // Check if onboarding is complete
@@ -151,16 +181,32 @@ async function handleAcceptedSubmission() {
   
   console.log('GitSync: Detected accepted submission:', problemInfo);
   
-  // Mark as processing
+  // Mark as processing IMMEDIATELY to prevent concurrent calls
   isProcessing = true;
-  lastSyncedSubmission = submissionId;
+  lastSyncedSubmissionHash = submissionHash;
+  
+  // Store in Chrome storage immediately to prevent duplicates
+  try {
+    const syncedData = await new Promise((resolve) => {
+      chrome.storage.local.get(['syncedSubmissions'], (data) => {
+        resolve(data.syncedSubmissions || {});
+      });
+    });
+    syncedData[submissionHash] = Date.now();
+    chrome.storage.local.set({ syncedSubmissions: syncedData });
+  } catch (e) {
+    console.log('GitSync: Could not store synced submission:', e);
+  }
   
   // Send to background script for syncing
   chrome.runtime.sendMessage({
     type: 'SYNC_SOLUTION',
     problem: problemInfo
   }, (response) => {
-    isProcessing = false;
+    // Keep isProcessing true for a bit longer to prevent rapid re-triggers
+    setTimeout(() => {
+      isProcessing = false;
+    }, 3000); // Keep processing flag for 3 seconds after sync
     
     if (response && response.success) {
       console.log('GitSync: Successfully synced to GitHub');
@@ -171,7 +217,7 @@ async function handleAcceptedSubmission() {
       if (!response?.error?.includes('does not match')) {
         showNotification('Failed to sync: ' + (response?.error || 'Unknown error'), 'error');
       }
-      // Don't reset lastSyncedSubmission on error - let user manually retry if needed
+      // Don't reset lastSyncedSubmissionHash on error - submission was already marked as processed
     }
   });
 }
