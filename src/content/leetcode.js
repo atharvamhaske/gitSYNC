@@ -33,6 +33,7 @@ const LANGUAGE_EXTENSIONS = {
 
 // Track if we've already synced this submission
 let lastSyncedSubmission = null;
+let isProcessing = false; // Prevent concurrent processing
 
 /**
  * Initialize the content script
@@ -69,21 +70,32 @@ function observeSubmissions() {
  * Check if there's an accepted submission on the page
  */
 function checkForAcceptedSubmission() {
-  // Look for "Accepted" result
+  // Don't check if already processing
+  if (isProcessing) {
+    return;
+  }
+  
+  // Look for "Accepted" result - be more specific to avoid false positives
   const acceptedSelectors = [
     '[data-e2e-locator="submission-result"]',
-    '[class*="success"]',
-    '[class*="accepted"]',
-    '.text-green-s',
-    'span[class*="text-green"]'
+    'div[class*="success"]',
+    'div[class*="accepted"]',
+    'span[class*="text-green"]',
+    'div[class*="text-green"]'
   ];
   
   for (const selector of acceptedSelectors) {
     const elements = document.querySelectorAll(selector);
     for (const element of elements) {
-      const text = element.textContent.toLowerCase();
-      if (text.includes('accepted')) {
-        handleAcceptedSubmission();
+      const text = element.textContent.trim().toLowerCase();
+      // Only trigger if it says "accepted" and not already processed
+      if (text === 'accepted' || (text.includes('accepted') && text.length < 50)) {
+        // Add a small delay to ensure DOM is stable
+        setTimeout(() => {
+          if (!isProcessing) {
+            handleAcceptedSubmission();
+          }
+        }, 500);
         return;
       }
     }
@@ -94,6 +106,11 @@ function checkForAcceptedSubmission() {
  * Handle an accepted submission
  */
 async function handleAcceptedSubmission() {
+  // Prevent concurrent processing
+  if (isProcessing) {
+    return;
+  }
+  
   // Get problem info
   const problemInfo = getProblemInfo();
   
@@ -102,10 +119,25 @@ async function handleAcceptedSubmission() {
     return;
   }
   
-  // Create unique submission ID
-  const submissionId = `${problemInfo.name}-${problemInfo.language}-${Date.now()}`;
+  // Validate problem name - if it's just a number or invalid, extract from URL
+  if (!problemInfo.name || /^\d+$/.test(problemInfo.name) || problemInfo.name.length < 2) {
+    console.warn('GitSync: Problem name is invalid:', problemInfo.name, '- extracting from URL');
+    const urlName = extractNameFromUrl();
+    if (urlName && urlName.length > 0) {
+      problemInfo.name = urlName;
+      console.log('GitSync: Updated problem name from URL:', urlName);
+    } else {
+      console.error('GitSync: Could not extract valid problem name, aborting sync');
+      isProcessing = false;
+      return;
+    }
+  }
   
-  // Check if we've already synced this
+  // Create unique submission ID based on problem name, language, and code hash
+  const codeHash = problemInfo.code.substring(0, 50); // Use first 50 chars as hash
+  const submissionId = `${problemInfo.name}-${problemInfo.language}-${codeHash}`;
+  
+  // Check if we've already synced this exact submission
   if (lastSyncedSubmission === submissionId) {
     return;
   }
@@ -119,7 +151,8 @@ async function handleAcceptedSubmission() {
   
   console.log('GitSync: Detected accepted submission:', problemInfo);
   
-  // Mark as synced
+  // Mark as processing
+  isProcessing = true;
   lastSyncedSubmission = submissionId;
   
   // Send to background script for syncing
@@ -127,16 +160,36 @@ async function handleAcceptedSubmission() {
     type: 'SYNC_SOLUTION',
     problem: problemInfo
   }, (response) => {
+    isProcessing = false;
+    
     if (response && response.success) {
       console.log('GitSync: Successfully synced to GitHub');
       showNotification('Solution synced to GitHub!', 'success');
     } else {
       console.error('GitSync: Failed to sync:', response?.error);
-      showNotification('Failed to sync: ' + (response?.error || 'Unknown error'), 'error');
-      // Reset so user can try again
-      lastSyncedSubmission = null;
+      // Only show error notification if it's not a SHA mismatch (file already exists)
+      if (!response?.error?.includes('does not match')) {
+        showNotification('Failed to sync: ' + (response?.error || 'Unknown error'), 'error');
+      }
+      // Don't reset lastSyncedSubmission on error - let user manually retry if needed
     }
   });
+}
+
+/**
+ * Extract problem name from URL as fallback
+ */
+function extractNameFromUrl() {
+  const match = window.location.pathname.match(/\/problems\/([^\/]+)/);
+  if (match) {
+    const slug = match[1];
+    // Convert slug like "two-sum" to "Two Sum"
+    return slug
+      .split('-')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
+  }
+  return null;
 }
 
 /**
@@ -191,35 +244,65 @@ function getProblemInfo() {
  * Get problem name from page
  */
 function getProblemName() {
-  // Try to get from title element
+  // Try multiple selectors for the problem title
   const titleSelectors = [
     '[data-cy="question-title"]',
-    'a[href*="/problems/"] span',
+    'div[class*="question-title"]',
+    'h1[class*="title"]',
+    'h2[class*="title"]',
+    'h3[class*="title"]',
+    'h4[class*="title"]',
+    'a[href*="/problems/"]',
     'div[class*="title"]',
-    'h4'
+    'span[class*="title"]'
   ];
   
   for (const selector of titleSelectors) {
-    const element = document.querySelector(selector);
-    if (element) {
+    const elements = document.querySelectorAll(selector);
+    for (const element of elements) {
       const text = element.textContent.trim();
-      // Remove problem number prefix
-      const cleaned = text.replace(/^\d+\.\s*/, '');
-      if (cleaned && cleaned.length > 0 && cleaned.length < 100) {
+      if (!text) continue;
+      
+      // Skip if it's just a number
+      if (/^\d+$/.test(text)) continue;
+      
+      // Remove problem number prefix (e.g., "1. Two Sum" -> "Two Sum")
+      let cleaned = text.replace(/^\d+\.\s*/, '');
+      
+      // Remove any trailing problem number (e.g., "Two Sum 1" -> "Two Sum")
+      cleaned = cleaned.replace(/\s+\d+$/, '');
+      
+      // Skip if it's still just a number or too short
+      if (/^\d+$/.test(cleaned) || cleaned.length < 2) continue;
+      
+      // Skip if it looks like a URL or path
+      if (cleaned.includes('/') || cleaned.includes('http')) continue;
+      
+      // Valid problem name should have at least one letter
+      if (!/[a-zA-Z]/.test(cleaned)) continue;
+      
+      if (cleaned.length > 0 && cleaned.length < 100) {
+        console.log('GitSync: Extracted problem name:', cleaned);
         return cleaned;
       }
     }
   }
   
-  // Fallback: extract from URL
+  // Fallback: extract from URL slug and convert to title case
   const match = window.location.pathname.match(/\/problems\/([^\/]+)/);
   if (match) {
-    return match[1]
+    const slug = match[1];
+    // Convert slug like "two-sum" to "Two Sum"
+    const name = slug
       .split('-')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
       .join(' ');
+    
+    console.log('GitSync: Extracted problem name from URL:', name);
+    return name;
   }
   
+  console.error('GitSync: Could not extract problem name');
   return null;
 }
 

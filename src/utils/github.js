@@ -209,14 +209,38 @@ export const pushSolution = async (token, repoUrl, problem) => {
 };
 
 /**
- * Convert string to camelCase
+ * Convert string to camelCase for filename
+ * Example: "Two Sum" -> "twoSum", "Longest Palindromic Substring" -> "longestPalindromicSubstring"
  * @param {string} str - Input string
  * @returns {string} - camelCase string
  */
 const toCamelCase = (str) => {
-  return str
+  if (!str || typeof str !== 'string') {
+    console.error('GitSync: Invalid string for toCamelCase:', str);
+    return 'solution';
+  }
+  
+  // Remove any leading/trailing whitespace
+  str = str.trim();
+  
+  // If it's just a number, return a default name
+  if (/^\d+$/.test(str)) {
+    console.warn('GitSync: Problem name is just a number, using default');
+    return 'solution';
+  }
+  
+  // Convert to camelCase
+  const camelCase = str
     .toLowerCase()
     .replace(/[^a-zA-Z0-9]+(.)/g, (_, chr) => chr.toUpperCase())
     .replace(/^./, (chr) => chr.toLowerCase())
     .replace(/[^a-zA-Z0-9]/g, '');
+  
+  // Ensure it's not empty
+  if (!camelCase || camelCase.length === 0) {
+    console.warn('GitSync: camelCase conversion resulted in empty string');
+    return 'solution';
+  }
+  
+  return camelCase;
 };

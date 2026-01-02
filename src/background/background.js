@@ -81,21 +81,30 @@ async function syncSolution(problem) {
  * Create or update a file in GitHub repository
  */
 async function createOrUpdateFile(token, owner, repo, path, content, message) {
-  // Check if file exists
+  // Always fetch the latest SHA before updating
   let sha = null;
-  const existingResponse = await fetch(
-    `${GITHUB_API_BASE}/repos/${owner}/${repo}/contents/${path}`,
-    {
-      headers: {
-        'Authorization': `token ${token}`,
-        'Accept': 'application/vnd.github.v3+json'
+  try {
+    const existingResponse = await fetch(
+      `${GITHUB_API_BASE}/repos/${owner}/${repo}/contents/${path}`,
+      {
+        headers: {
+          'Authorization': `token ${token}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      }
+    );
+    
+    if (existingResponse.ok) {
+      const existingData = await existingResponse.json();
+      // Only get SHA if it's a file (not a directory)
+      if (existingData.type === 'file' && existingData.sha) {
+        sha = existingData.sha;
+        console.log('GitSync: Found existing file, using SHA:', sha.substring(0, 8) + '...');
       }
     }
-  );
-  
-  if (existingResponse.ok) {
-    const existingData = await existingResponse.json();
-    sha = existingData.sha;
+  } catch (e) {
+    console.log('GitSync: Error checking for existing file:', e);
+    // Continue without SHA - will create new file
   }
   
   // Create or update file
@@ -119,8 +128,66 @@ async function createOrUpdateFile(token, owner, repo, path, content, message) {
   );
   
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.message || 'Failed to push to GitHub');
+    const errorData = await response.json();
+    const errorMessage = errorData.message || 'Failed to push to GitHub';
+    
+    // Handle SHA mismatch - fetch latest SHA and retry
+    if (errorMessage.includes('does not match')) {
+      console.log('GitSync: SHA mismatch detected, fetching latest SHA and retrying');
+      
+      try {
+        // Fetch the latest SHA
+        const latestResponse = await fetch(
+          `${GITHUB_API_BASE}/repos/${owner}/${repo}/contents/${path}`,
+          {
+            headers: {
+              'Authorization': `token ${token}`,
+              'Accept': 'application/vnd.github.v3+json'
+            }
+          }
+        );
+        
+        let latestSha = null;
+        if (latestResponse.ok) {
+          const latestData = await latestResponse.json();
+          if (latestData.type === 'file' && latestData.sha) {
+            latestSha = latestData.sha;
+          }
+        }
+        
+        // Retry with latest SHA
+        const retryBody = {
+          message: message + ' (updated)',
+          content: btoa(unescape(encodeURIComponent(content))),
+          ...(latestSha && { sha: latestSha })
+        };
+        
+        const retryResponse = await fetch(
+          `${GITHUB_API_BASE}/repos/${owner}/${repo}/contents/${path}`,
+          {
+            method: 'PUT',
+            headers: {
+              'Authorization': `token ${token}`,
+              'Accept': 'application/vnd.github.v3+json',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(retryBody)
+          }
+        );
+        
+        if (!retryResponse.ok) {
+          const retryError = await retryResponse.json();
+          throw new Error(retryError.message || errorMessage);
+        }
+        
+        console.log('GitSync: Successfully updated file after SHA retry');
+        return retryResponse.json();
+      } catch (retryError) {
+        throw new Error(retryError.message || errorMessage);
+      }
+    }
+    
+    throw new Error(errorMessage);
   }
   
   return response.json();
@@ -175,14 +242,38 @@ function parseRepoUrl(repoUrl) {
 }
 
 /**
- * Convert string to camelCase
+ * Convert string to camelCase for filename
+ * Example: "Two Sum" -> "twoSum", "Longest Palindromic Substring" -> "longestPalindromicSubstring"
  */
 function toCamelCase(str) {
-  return str
+  if (!str || typeof str !== 'string') {
+    console.error('GitSync: Invalid string for toCamelCase:', str);
+    return 'solution';
+  }
+  
+  // Remove any leading/trailing whitespace
+  str = str.trim();
+  
+  // If it's just a number, return a default name
+  if (/^\d+$/.test(str)) {
+    console.warn('GitSync: Problem name is just a number, using default');
+    return 'solution';
+  }
+  
+  // Convert to camelCase
+  const camelCase = str
     .toLowerCase()
     .replace(/[^a-zA-Z0-9]+(.)/g, (_, chr) => chr.toUpperCase())
     .replace(/^./, (chr) => chr.toLowerCase())
     .replace(/[^a-zA-Z0-9]/g, '');
+  
+  // Ensure it's not empty
+  if (!camelCase || camelCase.length === 0) {
+    console.warn('GitSync: camelCase conversion resulted in empty string');
+    return 'solution';
+  }
+  
+  return camelCase;
 }
 
 /**
