@@ -2,6 +2,12 @@
   "version": 2,
   "buildCommand": "npm run build:landing",
   "outputDirectory": "landing-dist",
+  "rewrites": [
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ],
   "headers": [
     {
       "source": "/api/(.*)",

@@ -40,39 +40,76 @@ export default async function handler(req, res) {
 
   try {
     // Exchange code for access token
+    const requestBody = {
+      client_id: clientId,
+      client_secret: clientSecret,
+      code: code,
+    };
+    
+    console.log('[OAuth Callback] Requesting token from GitHub...', {
+      hasCode: !!code,
+      codePrefix: code ? code.substring(0, 10) + '...' : 'none',
+      clientIdPrefix: clientId ? clientId.substring(0, 10) + '...' : 'none',
+      hasClientSecret: !!clientSecret
+    });
+    
     const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
       method: 'POST',
       headers: {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        client_id: clientId,
-        client_secret: clientSecret,
-        code: code,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
-    const tokenData = await tokenResponse.json();
+    const responseStatus = tokenResponse.status;
+    const responseText = await tokenResponse.text();
+    
+    console.log('[OAuth Callback] GitHub API response:', {
+      status: responseStatus,
+      statusText: tokenResponse.statusText,
+      contentType: tokenResponse.headers.get('content-type'),
+      responseLength: responseText.length,
+      responsePreview: responseText.substring(0, 200)
+    });
 
-    console.log('[OAuth Callback] Token response:', {
+    let tokenData;
+    try {
+      tokenData = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error('[OAuth Callback] Failed to parse GitHub response:', parseError);
+      console.error('[OAuth Callback] Raw response:', responseText);
+      return res.status(500).send(errorPage('Invalid response from GitHub. Please try again.'));
+    }
+
+    console.log('[OAuth Callback] Parsed token response:', {
       hasError: !!tokenData.error,
       error: tokenData.error,
       errorDescription: tokenData.error_description,
+      errorUri: tokenData.error_uri,
       hasAccessToken: !!tokenData.access_token,
-      hasScope: !!tokenData.scope
+      tokenType: tokenData.token_type,
+      scope: tokenData.scope,
+      refreshToken: !!tokenData.refresh_token
     });
 
     if (tokenData.error) {
       const errorMsg = tokenData.error_description || tokenData.error;
-      console.error('[OAuth Callback] GitHub API error:', errorMsg);
+      console.error('[OAuth Callback] GitHub API error:', {
+        error: tokenData.error,
+        errorDescription: tokenData.error_description,
+        errorUri: tokenData.error_uri,
+        fullResponse: tokenData
+      });
       
       // Provide helpful error messages for common issues
       let userMessage = errorMsg;
       if (tokenData.error === 'bad_verification_code') {
         userMessage = 'The authorization code has expired or is invalid. Please try again.';
       } else if (tokenData.error === 'incorrect_client_credentials') {
-        userMessage = 'Invalid client credentials. Please check your GitHub OAuth app settings.';
+        userMessage = 'Invalid client credentials. Please check your GitHub OAuth app settings and Vercel environment variables.';
+      } else if (tokenData.error === 'redirect_uri_mismatch') {
+        userMessage = 'Redirect URI mismatch. Please ensure your GitHub OAuth app callback URL is exactly: https://gitxsync.vercel.app/api/auth/callback';
       }
       
       return res.status(400).send(errorPage(userMessage));
@@ -85,7 +122,12 @@ export default async function handler(req, res) {
       return res.status(400).send(errorPage('No access token received from GitHub. Please try again.'));
     }
 
-    console.log('[OAuth Callback] Successfully obtained access token');
+    console.log('[OAuth Callback] Successfully obtained access token', {
+      tokenLength: accessToken.length,
+      tokenPrefix: accessToken.substring(0, 10) + '...',
+      tokenType: tokenData.token_type,
+      scope: tokenData.scope
+    });
     
     // Return HTML page that sends token to extension
     res.setHeader('Content-Type', 'text/html');
