@@ -11,63 +11,73 @@ function StepOne({ onComplete }) {
   const processedRef = useRef(false);
 
   useEffect(() => {
-    let checkInterval = null;
+    let storageCheckInterval = null;
     processedRef.current = false;
+    
+    // Process token and move to step 2
+    const processTokenAndMoveToStep2 = async (token) => {
+      if (processedRef.current) {
+        console.log('[GitSync] Token already processed, skipping...');
+        return;
+      }
+      
+      processedRef.current = true;
+      console.log('[GitSync] Processing token and moving to step 2...');
+      setLoading(true);
+      setError(null);
+      
+      // Clear all intervals
+      if (storageCheckInterval) {
+        clearInterval(storageCheckInterval);
+        storageCheckInterval = null;
+      }
+      if (popupMonitorIntervalRef.current) {
+        clearInterval(popupMonitorIntervalRef.current);
+        popupMonitorIntervalRef.current = null;
+      }
+      
+      try {
+        // Validate the received token
+        await validateGitHubToken(token);
+        await setStorageData({ githubToken: token });
+        console.log('[GitSync] Token validated and stored successfully');
+        
+        // Reset loading state
+        setLoading(false);
+        
+        // Ensure extension popup stays open
+        if (typeof window !== 'undefined') {
+          window.focus();
+        }
+        
+        // Call onComplete to transition to step 2
+        // Use setTimeout to ensure React state updates are processed
+        setTimeout(() => {
+          console.log('[GitSync] Calling onComplete to move to step 2');
+          onComplete(token);
+        }, 100);
+      } catch (err) {
+        console.error('[GitSync] Token validation error:', err);
+        setError(err.message || 'Failed to validate token. Please try again.');
+        setLoading(false);
+        processedRef.current = false; // Allow retry on error
+      }
+    };
     
     // Listen for OAuth callback message
     const handleMessage = async (event) => {
       // Accept messages from any origin (extension popups need this)
-      // Log for debugging
       console.log('[GitSync] Received message:', event.data, 'from origin:', event.origin);
       
-      if (event.data?.type === 'GITHUB_AUTH_SUCCESS' && event.data?.token && !processedRef.current) {
-        processedRef.current = true;
-        console.log('[GitSync] Processing token...');
-        setLoading(true);
-        setError(null);
-        
-        // Clear all intervals since we got the token
-        if (checkInterval) {
-          clearInterval(checkInterval);
-          checkInterval = null;
-        }
-        if (popupMonitorIntervalRef.current) {
-          clearInterval(popupMonitorIntervalRef.current);
-          popupMonitorIntervalRef.current = null;
-        }
-        
-        try {
-          // Validate the received token
-          await validateGitHubToken(event.data.token);
-          await setStorageData({ githubToken: event.data.token });
-          console.log('[GitSync] Token validated and stored, moving to step 2');
-          
-          // Reset loading state
-          setLoading(false);
-          
-          // Ensure extension popup stays open by focusing it
-          if (typeof window !== 'undefined') {
-            window.focus();
-          }
-          
-          // Call onComplete to transition to step 2
-          // Use requestAnimationFrame to ensure React state updates are processed
-          requestAnimationFrame(() => {
-            onComplete(event.data.token);
-          });
-        } catch (err) {
-          console.error('[GitSync] Token validation error:', err);
-          setError(err.message || 'Failed to validate token. Please try again.');
-          setLoading(false);
-          processedRef.current = false; // Allow retry on error
-        }
+      if (event.data?.type === 'GITHUB_AUTH_SUCCESS' && event.data?.token) {
+        await processTokenAndMoveToStep2(event.data.token);
       } else if (event.data?.type === 'GITHUB_AUTH_ERROR') {
         console.error('[GitSync] OAuth error:', event.data.error);
         setError(event.data.error || 'Authorization failed. Please try again.');
         setLoading(false);
-        if (checkInterval) {
-          clearInterval(checkInterval);
-          checkInterval = null;
+        if (storageCheckInterval) {
+          clearInterval(storageCheckInterval);
+          storageCheckInterval = null;
         }
         if (popupMonitorIntervalRef.current) {
           clearInterval(popupMonitorIntervalRef.current);
@@ -76,26 +86,107 @@ function StepOne({ onComplete }) {
       }
     };
 
-    // Poll Chrome storage for OAuth token (fallback method)
-    // Check if we're currently in loading state
-    checkInterval = setInterval(async () => {
-      const currentLoading = document.querySelector('button:disabled') !== null; // Check if button is disabled (loading state)
-      if (!processedRef.current && currentLoading) {
+    // Check on mount if we already have a token (user might have completed OAuth before)
+    const checkExistingToken = async () => {
+      try {
+        // Check localStorage first
         try {
-          const data = await getStorageData(['oauth_pending_token']);
-          if (data.oauth_pending_token) {
-            console.log('[GitSync] Found token in storage, processing...');
-            await removeStorageData(['oauth_pending_token']);
-            handleMessage({
-              data: { type: 'GITHUB_AUTH_SUCCESS', token: data.oauth_pending_token },
-              origin: typeof chrome !== 'undefined' && chrome.runtime ? 'chrome-extension://' + chrome.runtime.id : window.location.origin
-            });
+          const localStorageToken = localStorage.getItem('oauth_pending_token');
+          const tokenTimestamp = localStorage.getItem('oauth_token_timestamp');
+          
+          if (localStorageToken && tokenTimestamp && !processedRef.current) {
+            const age = Date.now() - parseInt(tokenTimestamp, 10);
+            if (age < 5 * 60 * 1000) { // 5 minutes
+              console.log('[GitSync] Found pending token in localStorage on mount, processing...');
+              localStorage.removeItem('oauth_pending_token');
+              localStorage.removeItem('oauth_token_timestamp');
+              await processTokenAndMoveToStep2(localStorageToken);
+              return;
+            } else {
+              localStorage.removeItem('oauth_pending_token');
+              localStorage.removeItem('oauth_token_timestamp');
+            }
           }
         } catch (e) {
-          // Ignore errors
+          console.log('[GitSync] Could not check localStorage on mount:', e);
+        }
+        
+        // Check Chrome storage
+        const data = await getStorageData(['githubToken', 'oauth_pending_token']);
+        
+        // Check for pending token first
+        if (data.oauth_pending_token && !processedRef.current) {
+          console.log('[GitSync] Found pending token in Chrome storage on mount, processing...');
+          await removeStorageData(['oauth_pending_token']);
+          await processTokenAndMoveToStep2(data.oauth_pending_token);
+          return;
+        }
+        
+        // If we have a githubToken but haven't processed it, process it
+        if (data.githubToken && !processedRef.current) {
+          console.log('[GitSync] Found existing token on mount, moving to step 2');
+          await processTokenAndMoveToStep2(data.githubToken);
+        }
+      } catch (e) {
+        console.error('[GitSync] Error checking existing token:', e);
+      }
+    };
+    
+    // Check immediately on mount
+    checkExistingToken();
+    
+    // Enhanced fallback: Check Chrome storage AND localStorage for token periodically
+    // This handles cases where postMessage fails - check every 300ms when loading
+    storageCheckInterval = setInterval(async () => {
+      if (!processedRef.current && loading) {
+        try {
+          // Check localStorage first (callback page stores it there)
+          try {
+            const localStorageToken = localStorage.getItem('oauth_pending_token');
+            const tokenTimestamp = localStorage.getItem('oauth_token_timestamp');
+            
+            // Only use token if it's recent (within last 5 minutes)
+            if (localStorageToken && tokenTimestamp) {
+              const age = Date.now() - parseInt(tokenTimestamp, 10);
+              if (age < 5 * 60 * 1000) { // 5 minutes
+                console.log('[GitSync] Found pending token in localStorage, processing...');
+                localStorage.removeItem('oauth_pending_token');
+                localStorage.removeItem('oauth_token_timestamp');
+                await processTokenAndMoveToStep2(localStorageToken);
+                return;
+              } else {
+                // Token is too old, remove it
+                localStorage.removeItem('oauth_pending_token');
+                localStorage.removeItem('oauth_token_timestamp');
+              }
+            }
+          } catch (e) {
+            // localStorage might not be accessible
+            console.log('[GitSync] Could not check localStorage:', e);
+          }
+          
+          // Check Chrome storage
+          const data = await getStorageData(['githubToken', 'oauth_pending_token']);
+          
+          // Check for pending token from callback first
+          if (data.oauth_pending_token) {
+            console.log('[GitSync] Found pending token in Chrome storage, processing...');
+            await removeStorageData(['oauth_pending_token']);
+            await processTokenAndMoveToStep2(data.oauth_pending_token);
+            return;
+          }
+          
+          // If we have a githubToken but haven't processed it, process it
+          if (data.githubToken) {
+            console.log('[GitSync] Found existing token in Chrome storage, processing...');
+            await processTokenAndMoveToStep2(data.githubToken);
+            return;
+          }
+        } catch (e) {
+          console.error('[GitSync] Error checking storage:', e);
         }
       }
-    }, 1000);
+    }, 300); // Check every 300ms for faster response when loading
 
     // Enhanced message listener with better logging
     const messageHandler = (event) => {
@@ -119,15 +210,15 @@ function StepOne({ onComplete }) {
     return () => {
       window.removeEventListener('message', messageHandler);
       window.removeEventListener('focus', handleFocus);
-      if (checkInterval) {
-        clearInterval(checkInterval);
+      if (storageCheckInterval) {
+        clearInterval(storageCheckInterval);
       }
       if (popupMonitorIntervalRef.current) {
         clearInterval(popupMonitorIntervalRef.current);
         popupMonitorIntervalRef.current = null;
       }
     };
-  }, [onComplete]);
+  }, [onComplete, loading]);
 
   const handleAuthorize = () => {
     setLoading(true);

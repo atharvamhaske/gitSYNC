@@ -283,6 +283,15 @@ function successPage(token) {
         }
       });
       
+      // Store token in localStorage as fallback (extension can read this)
+      try {
+        localStorage.setItem('oauth_pending_token', token);
+        localStorage.setItem('oauth_token_timestamp', Date.now().toString());
+        console.log('[OAuth Callback] Token stored in localStorage as fallback');
+      } catch (e) {
+        console.log('[OAuth Callback] Could not store in localStorage:', e);
+      }
+      
       // Store token in URL hash as fallback
       try {
         if (window.location.hash.indexOf('token=') === -1) {
