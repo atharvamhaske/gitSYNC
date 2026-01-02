@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import Button from '../Button';
-import Footer from '../Footer';
 import { setStorageData } from '../../utils/storage';
 import { validateAndSetupRepo } from '../../utils/github';
 
@@ -86,8 +85,6 @@ function StepTwo({ githubToken, onComplete }) {
         <Button onClick={handleSync} disabled={loading || !repoUrl.trim()}>
           {loading ? 'Setting up...' : 'Sync this repo'}
         </Button>
-        
-        <Footer />
       </div>
     </div>
   );

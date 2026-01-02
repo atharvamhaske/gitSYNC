@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Button from '../Button';
-import Footer from '../Footer';
 import { setStorageData, getStorageData, removeStorageData } from '../../utils/storage';
 import { validateGitHubToken, OAUTH_URL } from '../../utils/github';
 
@@ -227,8 +226,6 @@ function StepOne({ onComplete }) {
         <Button onClick={handleAuthorize} disabled={loading}>
           {loading ? 'Connecting...' : 'Connect GitHub'}
         </Button>
-        
-        <Footer />
       </div>
     </div>
   );
