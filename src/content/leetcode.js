@@ -35,18 +35,24 @@ const LANGUAGE_EXTENSIONS = {
 let lastSyncedSubmissionHash = null;
 let isProcessing = false; // Prevent concurrent processing
 let syncCheckTimeout = null; // Debounce check calls
+let pageLoadTime = Date.now(); // Track when page was loaded
+let syncedSubmissionsCache = null; // Cache of synced submissions
 
 /**
  * Initialize the content script
  */
-function init() {
+async function init() {
   console.log('GitSync: Content script loaded on LeetCode');
+  pageLoadTime = Date.now();
+  
+  // Load synced submissions cache on page load
+  await loadSyncedSubmissionsCache();
   
   // Watch for submission results
   observeSubmissions();
   
-  // Also check periodically for accepted submissions (less frequently)
-  setInterval(checkForAcceptedSubmission, 5000); // Reduced from 2000ms to 5000ms
+  // Don't check periodically - only trigger on DOM changes (new submissions)
+  // Removed setInterval to prevent syncing when just viewing old problems
 }
 
 /**
@@ -54,13 +60,39 @@ function init() {
  */
 function observeSubmissions() {
   const observer = new MutationObserver((mutations) => {
-    // Debounce checks to avoid excessive calls
-    if (syncCheckTimeout) {
-      clearTimeout(syncCheckTimeout);
+    // Only check if mutations suggest a new submission result appeared
+    let hasNewSubmissionResult = false;
+    
+    for (const mutation of mutations) {
+      if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+        // Check if added nodes contain submission result indicators
+        for (const node of mutation.addedNodes) {
+          if (node.nodeType === 1) { // Element node
+            const text = node.textContent?.toLowerCase() || '';
+            if (text.includes('accepted') || 
+                node.querySelector('[data-e2e-locator="submission-result"]') ||
+                node.querySelector('[class*="submission-result"]')) {
+              hasNewSubmissionResult = true;
+              // Reset page load time when new submission appears
+              pageLoadTime = Date.now();
+              break;
+            }
+          }
+        }
+        if (hasNewSubmissionResult) break;
+      }
     }
-    syncCheckTimeout = setTimeout(() => {
-      checkForAcceptedSubmission();
-    }, 1000); // Wait 1 second after DOM changes settle
+    
+    // Only check if we detected a new submission result
+    if (hasNewSubmissionResult) {
+      // Debounce checks to avoid excessive calls
+      if (syncCheckTimeout) {
+        clearTimeout(syncCheckTimeout);
+      }
+      syncCheckTimeout = setTimeout(() => {
+        checkForAcceptedSubmission();
+      }, 2000); // Wait 2 seconds after submission result appears
+    }
   });
   
   observer.observe(document.body, {
@@ -70,7 +102,26 @@ function observeSubmissions() {
 }
 
 /**
+ * Load synced submissions cache from Chrome storage
+ */
+async function loadSyncedSubmissionsCache() {
+  try {
+    const data = await new Promise((resolve) => {
+      chrome.storage.local.get(['syncedSubmissions'], (data) => {
+        resolve(data.syncedSubmissions || {});
+      });
+    });
+    syncedSubmissionsCache = data;
+    console.log('GitSync: Loaded', Object.keys(syncedSubmissionsCache).length, 'synced submissions from cache');
+  } catch (e) {
+    console.log('GitSync: Could not load synced submissions cache:', e);
+    syncedSubmissionsCache = {};
+  }
+}
+
+/**
  * Check if there's an accepted submission on the page
+ * Only triggers for NEW submissions, not when viewing old problems
  */
 function checkForAcceptedSubmission() {
   // Don't check if already processing
@@ -78,33 +129,54 @@ function checkForAcceptedSubmission() {
     return;
   }
   
-  // Look for "Accepted" result - be more specific to avoid false positives
-  const acceptedSelectors = [
+  // Only check for NEW submissions (within 30 seconds of page load or DOM change)
+  // This prevents syncing when just viewing an already-solved problem
+  const timeSincePageLoad = Date.now() - pageLoadTime;
+  if (timeSincePageLoad > 30000) {
+    // Page has been loaded for more than 30 seconds - likely just viewing, not submitting
+    return;
+  }
+  
+  // Look for "Accepted" result in submission result panel (new submissions)
+  // Be very specific to only catch NEW submission results
+  const submissionResultSelectors = [
     '[data-e2e-locator="submission-result"]',
-    'div[class*="success"]',
-    'div[class*="accepted"]',
-    'span[class*="text-green"]',
-    'div[class*="text-green"]'
+    'div[class*="submission-result"]',
+    'div[class*="result-container"]'
   ];
   
-  for (const selector of acceptedSelectors) {
+  let foundNewSubmission = false;
+  
+  for (const selector of submissionResultSelectors) {
     const elements = document.querySelectorAll(selector);
     for (const element of elements) {
       const text = element.textContent.trim().toLowerCase();
-      // Only trigger if it says "accepted" and not already processed
-      if (text === 'accepted' || (text.includes('accepted') && text.length < 50)) {
-        // Debounce: only trigger once per second max
-        if (syncCheckTimeout) {
-          clearTimeout(syncCheckTimeout);
+      // Only trigger if it says "accepted" in a submission result context
+      if (text.includes('accepted') && text.length < 100) {
+        // Check if this is a NEW submission result (has timing info like "Runtime" or "Memory")
+        const hasRuntimeInfo = text.includes('runtime') || text.includes('memory') || 
+                              element.querySelector('[class*="runtime"]') || 
+                              element.querySelector('[class*="memory"]');
+        
+        if (hasRuntimeInfo) {
+          foundNewSubmission = true;
+          break;
         }
-        syncCheckTimeout = setTimeout(() => {
-          if (!isProcessing) {
-            handleAcceptedSubmission();
-          }
-        }, 1000); // Increased delay to prevent rapid-fire triggers
-        return;
       }
     }
+    if (foundNewSubmission) break;
+  }
+  
+  if (foundNewSubmission) {
+    // Debounce: only trigger once per second max
+    if (syncCheckTimeout) {
+      clearTimeout(syncCheckTimeout);
+    }
+    syncCheckTimeout = setTimeout(() => {
+      if (!isProcessing) {
+        handleAcceptedSubmission();
+      }
+    }, 2000); // Wait 2 seconds to ensure submission result is fully loaded
   }
 }
 
@@ -149,9 +221,16 @@ async function handleAcceptedSubmission() {
   }
   const submissionHash = `${problemInfo.name}-${problemInfo.language}-${Math.abs(codeHash)}`;
   
-  // Check if we've already synced this exact submission
+  // Check if we've already synced this exact submission in this session
   if (lastSyncedSubmissionHash === submissionHash) {
-    console.log('GitSync: Duplicate submission detected, skipping sync');
+    console.log('GitSync: Duplicate submission detected (same session), skipping sync');
+    return;
+  }
+  
+  // Check cached synced submissions first (faster)
+  if (syncedSubmissionsCache && syncedSubmissionsCache[submissionHash]) {
+    console.log('GitSync: Submission already synced (found in cache), skipping');
+    lastSyncedSubmissionHash = submissionHash;
     return;
   }
   
@@ -163,6 +242,9 @@ async function handleAcceptedSubmission() {
       });
     });
     
+    // Update cache
+    syncedSubmissionsCache = syncedData;
+    
     if (syncedData[submissionHash]) {
       console.log('GitSync: Submission already synced (found in storage), skipping');
       lastSyncedSubmissionHash = submissionHash;
@@ -170,6 +252,37 @@ async function handleAcceptedSubmission() {
     }
   } catch (e) {
     console.log('GitSync: Could not check synced submissions storage:', e);
+  }
+  
+  // CRITICAL: Check if file already exists in GitHub before syncing
+  // This prevents syncing when visiting an already-solved problem
+  try {
+    const onboardingData = await new Promise((resolve) => {
+      chrome.storage.local.get(['githubToken', 'repoUrl', 'onboardingComplete'], (data) => {
+        resolve(data);
+      });
+    });
+    
+    if (onboardingData.onboardingComplete && onboardingData.githubToken && onboardingData.repoUrl) {
+      const fileExists = await checkIfFileExistsInGitHub(
+        onboardingData.githubToken,
+        onboardingData.repoUrl,
+        problemInfo
+      );
+      
+      if (fileExists) {
+        console.log('GitSync: File already exists in GitHub, skipping sync');
+        // Mark as synced in storage to prevent future checks
+        lastSyncedSubmissionHash = submissionHash;
+        if (!syncedSubmissionsCache) syncedSubmissionsCache = {};
+        syncedSubmissionsCache[submissionHash] = Date.now();
+        chrome.storage.local.set({ syncedSubmissions: syncedSubmissionsCache });
+        return;
+      }
+    }
+  } catch (e) {
+    console.log('GitSync: Could not check GitHub for existing file:', e);
+    // Continue with sync if check fails (better to sync than miss)
   }
   
   // Check if onboarding is complete
@@ -187,13 +300,9 @@ async function handleAcceptedSubmission() {
   
   // Store in Chrome storage immediately to prevent duplicates
   try {
-    const syncedData = await new Promise((resolve) => {
-      chrome.storage.local.get(['syncedSubmissions'], (data) => {
-        resolve(data.syncedSubmissions || {});
-      });
-    });
-    syncedData[submissionHash] = Date.now();
-    chrome.storage.local.set({ syncedSubmissions: syncedData });
+    if (!syncedSubmissionsCache) syncedSubmissionsCache = {};
+    syncedSubmissionsCache[submissionHash] = Date.now();
+    chrome.storage.local.set({ syncedSubmissions: syncedSubmissionsCache });
   } catch (e) {
     console.log('GitSync: Could not store synced submission:', e);
   }
@@ -220,6 +329,52 @@ async function handleAcceptedSubmission() {
       // Don't reset lastSyncedSubmissionHash on error - submission was already marked as processed
     }
   });
+}
+
+/**
+ * Check if file already exists in GitHub
+ */
+async function checkIfFileExistsInGitHub(token, repoUrl, problemInfo) {
+  try {
+    // Parse repo URL
+    const match = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
+    if (!match) return false;
+    
+    const owner = match[1];
+    const repo = match[2].replace(/\.git$/, '');
+    
+    // Convert problem name to camelCase for filename
+    const toCamelCase = (str) => {
+      if (!str || typeof str !== 'string') return 'solution';
+      str = str.trim();
+      if (/^\d+$/.test(str)) return 'solution';
+      return str
+        .toLowerCase()
+        .replace(/[^a-zA-Z0-9]+(.)/g, (_, chr) => chr.toUpperCase())
+        .replace(/^./, (chr) => chr.toLowerCase())
+        .replace(/[^a-zA-Z0-9]/g, '') || 'solution';
+    };
+    
+    const fileName = toCamelCase(problemInfo.name) + '.' + problemInfo.extension;
+    const folder = problemInfo.difficulty.toLowerCase();
+    const filePath = `${folder}/${fileName}`;
+    
+    // Check if file exists via GitHub API
+    const response = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`,
+      {
+        headers: {
+          'Authorization': `token ${token}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      }
+    );
+    
+    return response.ok; // File exists if response is OK
+  } catch (e) {
+    console.log('GitSync: Error checking GitHub file existence:', e);
+    return false; // Assume doesn't exist if check fails
+  }
 }
 
 /**
