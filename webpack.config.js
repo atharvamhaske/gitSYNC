@@ -44,7 +44,8 @@ module.exports = {
     new CopyWebpackPlugin({
       patterns: [
         { from: 'public/manifest.json', to: 'manifest.json' },
-        { from: 'public/icons', to: 'icons', noErrorOnMissing: true }
+        { from: 'public/icons', to: 'icons', noErrorOnMissing: true },
+        { from: 'gitsync.png', to: 'gitsync.png' }
       ]
     }),
     new MiniCssExtractPlugin({

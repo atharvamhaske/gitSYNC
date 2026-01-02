@@ -1,11 +1,7 @@
 /**
  * GitSync Background Service Worker
- * Handles GitHub OAuth token exchange and sync operations
+ * Handles sync operations
  */
-
-// GitHub OAuth configuration
-const CLIENT_ID = 'YOUR_GITHUB_CLIENT_ID';
-const CLIENT_SECRET = 'YOUR_GITHUB_CLIENT_SECRET'; // Note: In production, use a backend server
 
 const GITHUB_API_BASE = 'https://api.github.com';
 
@@ -13,13 +9,6 @@ const GITHUB_API_BASE = 'https://api.github.com';
  * Listen for messages from popup and content scripts
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'EXCHANGE_CODE') {
-    exchangeCodeForToken(message.code)
-      .then(token => sendResponse({ token }))
-      .catch(error => sendResponse({ error: error.message }));
-    return true; // Keep channel open for async response
-  }
-  
   if (message.type === 'SYNC_SOLUTION') {
     syncSolution(message.problem)
       .then(result => sendResponse({ success: true, result }))
@@ -35,42 +24,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 });
-
-/**
- * Exchange authorization code for access token
- * Note: In production, this should be done via a backend server
- * @param {string} code - Authorization code
- * @returns {Promise<string>} - Access token
- */
-async function exchangeCodeForToken(code) {
-  // For development/personal use, you can use a personal access token directly
-  // For production, implement a backend server to handle token exchange
-  
-  const response = await fetch('https://github.com/login/oauth/access_token', {
-    method: 'POST',
-    headers: {
-      'Accept': 'application/json',
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      code: code
-    })
-  });
-  
-  if (!response.ok) {
-    throw new Error('Failed to exchange code for token');
-  }
-  
-  const data = await response.json();
-  
-  if (data.error) {
-    throw new Error(data.error_description || data.error);
-  }
-  
-  return data.access_token;
-}
 
 /**
  * Sync a LeetCode solution to GitHub

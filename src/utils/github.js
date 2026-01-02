@@ -1,68 +1,49 @@
 /**
  * GitHub API Utilities
- * Handles OAuth and repository operations
+ * Handles OAuth, token validation and repository operations
  */
 
 const GITHUB_API_BASE = 'https://api.github.com';
 
-// GitHub OAuth configuration
-// Users need to create their own OAuth App at https://github.com/settings/developers
-const CLIENT_ID = 'YOUR_GITHUB_CLIENT_ID';
+// OAuth URL - Update this after deploying to Vercel
+// Replace 'your-app-name' with your actual Vercel deployment URL
+export const OAUTH_URL = 'https://git-sync-eight.vercel.app/api/auth/github';
 
 /**
- * Initiate GitHub OAuth flow
- * @returns {Promise<string>} - Access token
+ * Validate GitHub Personal Access Token
+ * @param {string} token - GitHub PAT
+ * @returns {Promise<object>} - User data if valid
  */
-export const initiateGitHubOAuth = () => {
-  return new Promise((resolve, reject) => {
-    if (typeof chrome !== 'undefined' && chrome.identity) {
-      // Use Chrome Identity API for OAuth
-      const redirectUrl = chrome.identity.getRedirectURL();
-      const authUrl = `https://github.com/login/oauth/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUrl)}&scope=repo`;
-      
-      chrome.identity.launchWebAuthFlow(
-        { url: authUrl, interactive: true },
-        (responseUrl) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
-          }
-          
-          if (responseUrl) {
-            // Extract code from response URL
-            const url = new URL(responseUrl);
-            const code = url.searchParams.get('code');
-            
-            if (code) {
-              // Exchange code for token via background script
-              chrome.runtime.sendMessage(
-                { type: 'EXCHANGE_CODE', code },
-                (response) => {
-                  if (response && response.token) {
-                    resolve(response.token);
-                  } else {
-                    reject(new Error('Failed to exchange code for token'));
-                  }
-                }
-              );
-            } else {
-              reject(new Error('No authorization code received'));
-            }
-          } else {
-            reject(new Error('No response URL received'));
-          }
-        }
-      );
-    } else {
-      // Development fallback - prompt for personal access token
-      const token = prompt('Enter your GitHub Personal Access Token (with repo scope):');
-      if (token) {
-        resolve(token);
-      } else {
-        reject(new Error('No token provided'));
-      }
+export const validateGitHubToken = async (token) => {
+  const response = await fetch(`${GITHUB_API_BASE}/user`, {
+    headers: {
+      'Authorization': `token ${token}`,
+      'Accept': 'application/vnd.github.v3+json'
     }
   });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error('Invalid token. Please check your Personal Access Token.');
+    }
+    throw new Error('Failed to validate token. Please try again.');
+  }
+
+  const userData = await response.json();
+  
+  // Check if token has repo scope by trying to list repos
+  const repoResponse = await fetch(`${GITHUB_API_BASE}/user/repos?per_page=1`, {
+    headers: {
+      'Authorization': `token ${token}`,
+      'Accept': 'application/vnd.github.v3+json'
+    }
+  });
+
+  if (!repoResponse.ok) {
+    throw new Error('Token missing required "repo" scope. Please create a new token with repo access.');
+  }
+
+  return userData;
 };
 
 /**

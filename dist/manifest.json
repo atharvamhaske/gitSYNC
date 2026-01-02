@@ -7,7 +7,7 @@
     "storage",
     "tabs",
     "activeTab",
-    "identity"
+    "notifications"
   ],
   "host_permissions": [
     "https://leetcode.com/*",
@@ -35,9 +35,5 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  },
-  "oauth2": {
-    "client_id": "YOUR_GITHUB_CLIENT_ID",
-    "scopes": ["repo"]
   }
 }
